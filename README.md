@@ -12,7 +12,7 @@ everything else (engine, worldgen, mesher, physics, shaders) is inline.
 | Host | Link |
 | --- | --- |
 | GitHub Pages | https://aniruddhaadak80.github.io/minecraft-web/ |
-| Vercel | https://minecraft-web-<hash>.vercel.app |
+| Vercel | https://minecraft-web-aniruddha-adaks-projects.vercel.app |
 
 Add `#play` to skip the intro screen, e.g. `.../index.html#play`.
 
