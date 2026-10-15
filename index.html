@@ -1281,9 +1281,12 @@ function look(dx, dy, speed) {
 }
 
 function requestLock() {
-  if (typeof canvas.requestPointerLock === 'function') {
-    try { canvas.requestPointerLock(); } catch (e) { dragging = true; }
-  }
+  if (typeof canvas.requestPointerLock !== 'function') { dragging = true; return; }
+  try {
+    // newer browsers return a promise that rejects without a user gesture
+    var lockReq = canvas.requestPointerLock();
+    if (lockReq && typeof lockReq.catch === "function") lockReq.catch(function () { dragging = true; });
+  } catch (e) { dragging = true; }
 }
 document.addEventListener('pointerlockchange', function () {
   locked = document.pointerLockElement === canvas;
