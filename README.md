@@ -1,8 +1,9 @@
 # VoxelVerse - a playable Minecraft in one HTML file
 
-A browser voxel sandbox: infinite procedural terrain, block breaking/placing, water, trees,
-an 8-minute day/night cycle and custom GLSL shaders (sky dome with sun disc + stars, procedural
-clouds, animated fresnel water, atmospheric fog, baked ambient occlusion, a first-person held
+A browser voxel sandbox: infinite procedural terrain with caves and ores, block
+breaking/placing, water, trees, a working light engine, an 8-minute day/night cycle and
+custom GLSL shaders (sky dome with sun disc + stars, procedural clouds, animated fresnel
+water, atmospheric fog, baked ambient occlusion and per-face lighting, a first-person held
 block, and break particles).
 
 The entire game is **`index.html`** - one file, no build step. three.js is loaded from a CDN;
@@ -59,24 +60,32 @@ Touch controls appear automatically on touch devices (layout verified overlap-fr
 
 ## Blocks
 
-Grass, dirt, stone, sand, cobblestone, gravel, mossy stone, planks, brick, **glass**
-(transparent), snow, wood, oak leaves, pine needles, plus poppies, daisies and grass tufts
-(cross-shaped plants with wind sway), and a **lamp** that glows, pulses, and ignores daylight.
+20 blocks: grass, dirt, stone, sand, cobblestone, gravel, mossy stone, planks, brick,
+**glass** (transparent), snow, wood, oak leaves, pine needles, **coal ore** and **iron ore**
+(pockets hidden in the stone), plus poppies, daisies and grass tufts (cross-shaped plants
+with wind sway), and a **lamp** that glows, pulses, and lights up its surroundings.
 
-World features: oceans and lakes with sand beaches, oak and pine trees, snow-capped mountains,
-plants scattered on grass, and water that settles into holes dug below sea level. Your edits are
-saved to `localStorage` and restored the next time you load the page.
+World features: oceans and lakes with sand beaches, oak and pine trees, snow-capped
+mountains, plants scattered on grass, water that settles into holes dug below sea level,
+and **caves** - twin 3D-noise fields carve explorable tunnels under the surface, pitch dark
+until you bring a lamp. Your edits are saved to `localStorage` and restored the next time
+you load the page.
 
 ## How it works
 
 - **Worldgen** - value-noise fBm builds a heightmap (continents + hills + ridges); columns are
-  filled with stone/dirt/grass/sand, sea level carves oceans, snow caps grow above y=46. Chunks
-  are `16 x 16 x 80`.
+  filled with stone/dirt/grass/sand, sea level carves oceans, snow caps grow above y=46. Two
+  offset 3D value-noise fields carve caves below the surface, and a 3D hash scatters coal and
+  iron ore pockets through the stone. Chunks are `16 x 16 x 80`.
+- **Light engine** - every chunk carries a per-cell light map: skylight floods down each
+  column (dimmed by leaves, water and glass), and lamps spread block light by BFS flood fill.
+  Light is computed after trees so canopies shade correctly, and recomputed whenever a chunk
+  is rebuilt - digging a skylight or placing/removing a lamp updates the lighting live.
 - **Mesher** - per-chunk face extraction into four layers: opaque, water, glass and plants.
   Only faces touching air/water/plants are emitted, with per-vertex ambient occlusion (0-3
-  occluders) and per-face directional shading baked into vertex colours. Plants are two crossed
-  quads displaced by a wind term in the vertex shader. Emissive blocks carry vertex colours
-  above 1.0 and bypass lighting in the shader.
+  occluders), per-face directional shading, and the baked light level multiplied into every
+  vertex colour. Plants are two crossed quads displaced by a wind term in the vertex shader.
+  Emissive blocks carry vertex colours above 1.0 and bypass lighting in the shader.
 - **Shaders** - one `ShaderMaterial` per layer: terrain/glass share directional sun + hemisphere
   ambient + hash-based surface noise + distance fog; water adds vertex-wave displacement, fresnel
   and a Blinn sun glint; the sky dome has a gradient, sun disc, halo and twinkling stars; clouds
