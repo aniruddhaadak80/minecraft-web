@@ -1,4 +1,4 @@
-# VoxelVerse - a playable Minecraft in one HTML file
+﻿# VoxelVerse - a playable Minecraft in one HTML file
 
 A browser voxel sandbox: infinite procedural terrain with caves and ores, block
 breaking/placing, water, trees, a working light engine, pigs, TNT, rain, a synthesized
@@ -34,7 +34,7 @@ specific world, e.g. `.../index.html?seed=1337#play`.
 | Sprint | `Shift`, or double-tap `W` to lock sprint |
 | Sneak (slower, camera lower, no walking off ledges) | `Ctrl` or `C` |
 | Zoom | `Z` |
-| Break block | Left click (hold to repeat) |
+| Break block | Left click - short tap digs soft blocks, hold to mine stone and ore |
 | Place block | Right click (hold to repeat) |
 | Fly mode | `F` (`Space` up, `Shift` down) |
 | Select block | `1`-`9` or mouse wheel |
@@ -64,7 +64,7 @@ Touch controls appear automatically on touch devices (layout verified overlap-fr
 | Jump | Jump button |
 | Sneak | Sneak button |
 | Zoom | Zoom button |
-| Break block | Break button (hold to repeat) |
+| Break block | Break button - tap for soft blocks, hold to mine hard ones |
 | Place block | Place button |
 | Fly mode | Fly button |
 | Rain on/off | Rain button |
@@ -83,6 +83,17 @@ World features: oceans and lakes with sand beaches, oak and pine trees, snow-cap
 mountains, plants scattered on grass, water that settles into holes dug below sea level,
 and **caves** - twin 3D-noise fields carve explorable tunnels under the surface, pitch dark
 until you bring a lamp.
+
+## Mining
+
+Blocks have hardness, and holding the break button spreads cracks across the face you are
+working on before the block gives way. Soft ground (dirt, sand, gravel, grass, snow, plants)
+breaks on a short tap; wood, glass and planks take a beat longer; stone, cobble, brick and
+sandstone need a real hold; ore is the slowest thing in the world. Release early and you keep
+what you were mining - a tap that got a third of the way through still finishes the job, so
+quick clicks never feel dead. The crack pattern is generated once at load as eight
+progressively denser canvas textures, so every block uses the same damage overlay with no
+extra assets, and moving off a block resets its progress.
 
 ## Mobs, TNT and weather
 
@@ -149,3 +160,4 @@ Just open `index.html` in a browser, or serve the folder:
 ```bash
 npx serve .          # or: python -m http.server
 ```
+

@@ -310,6 +310,19 @@ function isEmissive(t) { var b = BLOCKS[t]; return !!b && has(b.flags, 'lamp'); 
 function isLiquid(t) { return t === WATER; }
 function blocksSight(t) { return isOpaque(t) || isGlass(t); }
 
+// Seconds of continuous mining to break a block. Soft blocks finish on a plain
+// click; stone and ore make you hold the button and watch the cracks spread.
+var HARDNESS = {};
+HARDNESS[FLOWER_R] = 0.03; HARDNESS[FLOWER_Y] = 0.03; HARDNESS[GRASS_TUFT] = 0.03;
+HARDNESS[TNT] = 0.02;   // a tap sets the fuse, it never mines through
+HARDNESS[SNOW] = 0.10; HARDNESS[LEAVES] = 0.10; HARDNESS[PINE] = 0.11;
+HARDNESS[SAND] = 0.12; HARDNESS[GRASS] = 0.14; HARDNESS[DIRT] = 0.14;
+HARDNESS[GRAVEL] = 0.15; HARDNESS[MOSSY] = 0.16; HARDNESS[GLASS] = 0.16;
+HARDNESS[LAMP] = 0.18; HARDNESS[PLANKS] = 0.22; HARDNESS[WOOD] = 0.24;
+HARDNESS[SANDSTONE] = 0.30; HARDNESS[COBBLE] = 0.30; HARDNESS[STONE] = 0.32;
+HARDNESS[BRICK] = 0.34; HARDNESS[COAL_ORE] = 0.46; HARDNESS[IRON_ORE] = 0.56;
+function hardnessOf(t) { var h = HARDNESS[t]; return h === undefined ? 0.25 : h; }
+
 // ============================================================
 //  Noise (32-bit integer hash — stays uniform in [0,1))
 // ============================================================
@@ -1307,6 +1320,68 @@ var highlight = new THREE.LineSegments(
 highlight.visible = false;
 scene.add(highlight);
 
+// --- mining cracks (procedural, eight stages) ------------------------------
+var CRACK_STAGES = 8;
+// One deterministic set of crack branches; each stage draws a longer prefix so
+// the damage accumulates instead of flashing new lines every frame.
+var crackBranches = (function () {
+  var s = 20260101;
+  function rnd() { s = (Math.imul(s, 1664525) + 1013904223) & 0x7fffffff; return s / 0x7fffffff; }
+  var out = [];
+  for (var b = 0; b < 22; b++) {
+    // start on a ring around the middle so the web spreads outward
+    var ang = rnd() * Math.PI * 2, rad = 2 + rnd() * 12;
+    var x = 16 + Math.cos(ang) * rad, y = 16 + Math.sin(ang) * rad;
+    var a = ang + (rnd() - 0.5) * 0.9;
+    var n = 2 + ((rnd() * 4) | 0);
+    var pts = [[x, y]];
+    for (var i = 0; i < n; i++) {
+      a += (rnd() - 0.5) * 1.1;
+      x = Math.max(1, Math.min(31, x + Math.cos(a) * (1.5 + rnd() * 3.5)));
+      y = Math.max(1, Math.min(31, y + Math.sin(a) * (1.5 + rnd() * 3.5)));
+      pts.push([x, y]);
+    }
+    out.push(pts);
+  }
+  return out;
+})();
+function crackTexture(stage) {
+  var cv = document.createElement('canvas');
+  cv.width = cv.height = 32;
+  var g = cv.getContext('2d');
+  g.clearRect(0, 0, 32, 32);
+  g.strokeStyle = 'rgba(8,6,4,0.88)';
+  g.lineWidth = 0.7;
+  g.lineCap = 'round';
+  var upto = 3 + Math.round((crackBranches.length - 3) * stage / (CRACK_STAGES - 1));
+  for (var b = 0; b < upto; b++) {
+    var pts = crackBranches[b];
+    g.beginPath();
+    g.moveTo(pts[0][0], pts[0][1]);
+    for (var i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+    g.stroke();
+  }
+  var tex = new THREE.CanvasTexture(cv);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  return tex;
+}
+var crackTextures = [];
+for (var ci = 0; ci < CRACK_STAGES; ci++) crackTextures.push(crackTexture(ci));
+
+var crackMesh = new THREE.Mesh(
+  new THREE.BoxGeometry(1.008, 1.008, 1.008),
+  new THREE.MeshBasicMaterial({
+    map: crackTextures[0], transparent: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3
+  })
+);
+crackMesh.visible = false;
+crackMesh.renderOrder = 4;
+scene.add(crackMesh);
+
+var mining = { active: false, x: 0, y: 0, z: 0, progress: 0, stage: -1 };
+
 // --- held block (first-person view model) ---
 var handMat = litMaterial(1);
 var heldBlock = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.26), handMat);
@@ -1315,16 +1390,27 @@ camera.add(heldBlock);
 scene.add(camera);
 
 var heldColors = [];      // per-vertex colours for the held cube (6 faces x 4 corners = 24 verts)
+// BoxGeometry emits its faces in +X, -X, +Y, -Y, +Z, -Z order.
+function faceColour(id, face) {
+  if (id === GRASS && face !== 2) return BLOCKS[DIRT].color;  // only the top is green
+  return BLOCKS[id].color;
+}
 (function buildHeldColors() {
-  for (var i = 0; i < 24; i++) {
-    var c = BLOCKS[GRASS].color;
-    heldColors.push(c[0], c[1], c[2]);
+  for (var f = 0; f < 6; f++) {
+    var c = faceColour(GRASS, f);
+    for (var v = 0; v < 4; v++) heldColors.push(c[0], c[1], c[2]);
   }
 })();
 function refreshHeldBlock() {
-  var c = BLOCKS[HOTBAR[selected]].color;
+  var id = HOTBAR[selected];
   var arr = heldBlock.geometry.attributes.color.array;
-  for (var i = 0; i < arr.length; i += 3) { arr[i] = c[0]; arr[i + 1] = c[1]; arr[i + 2] = c[2]; }
+  for (var f = 0; f < 6; f++) {
+    var c = faceColour(id, f);
+    for (var v = 0; v < 4; v++) {
+      var i = (f * 4 + v) * 3;
+      arr[i] = c[0]; arr[i + 1] = c[1]; arr[i + 2] = c[2];
+    }
+  }
   heldBlock.geometry.attributes.color.needsUpdate = true;
   heldBlock.material.uniforms.detailAmt.value = isEmissive(HOTBAR[selected]) ? 0.25 : 0.14;
 }
@@ -1860,23 +1946,71 @@ function updateFuses(dt) {
   }
 }
 
-function breakBlock() {
-  if (tryHitMob()) return;   // pigs first, blocks second
-  var hit = updateHighlight();
-  if (!hit || hit.y < 1) return;
-  var broken = getBlock(hit.x, hit.y, hit.z);
-  if (broken === TNT) { igniteTNT(hit.x, hit.y, hit.z); swingHeld(); return; }
-  setBlock(hit.x, hit.y, hit.z, AIR);
-  spawnParticles(hit.x, hit.y, hit.z, broken);
+function breakBlockAt(x, y, z) {
+  var broken = getBlock(x, y, z);
+  if (broken === AIR) return;
+  if (broken === TNT) { igniteTNT(x, y, z); swingHeld(); return; }
+  setBlock(x, y, z, AIR);
+  spawnParticles(x, y, z, broken);
   Sfx.breakSound(broken);
   swingHeld();
   // a little water settles in if the hole was below sea level
-  if (hit.y <= SEA && getBlock(hit.x, hit.y, hit.z) === AIR &&
-      getBlock(hit.x, hit.y - 1, hit.z) !== AIR && getBlock(hit.x, hit.y - 1, hit.z) !== WATER) {
+  if (y <= SEA && getBlock(x, y, z) === AIR &&
+      getBlock(x, y - 1, z) !== AIR && getBlock(x, y - 1, z) !== WATER) {
     for (var i = 1; i <= 4; i++) {
-      if (getBlock(hit.x, hit.y - i, hit.z) === AIR) { setBlock(hit.x, hit.y - i, hit.z, WATER); break; }
+      if (getBlock(x, y - i, z) === AIR) { setBlock(x, y - i, z, WATER); break; }
     }
   }
+}
+
+// --- hold-to-mine ----------------------------------------------------------
+function stopMining() {
+  mining.active = false;
+  mining.stage = -1;
+  crackMesh.visible = false;
+}
+
+function startMining() {
+  if (tryHitMob()) { swingHeld(); return; }   // pigs first, blocks second
+  var hit = updateHighlight();
+  if (!hit || hit.y < 1) { stopMining(); return; }
+  var t = getBlock(hit.x, hit.y, hit.z);
+  if (t === AIR) { stopMining(); return; }
+  if (hardnessOf(t) <= 0.04) { breakBlockAt(hit.x, hit.y, hit.z); stopMining(); return; }
+  mining.active = true;
+  mining.x = hit.x; mining.y = hit.y; mining.z = hit.z;
+  mining.progress = 0;
+  mining.stage = -1;
+  swingHeld();
+}
+
+function updateMining(dt) {
+  if (!mining.active) return;
+  var hit = updateHighlight();
+  if (!hit || hit.x !== mining.x || hit.y !== mining.y || hit.z !== mining.z) { stopMining(); return; }
+  var t = getBlock(mining.x, mining.y, mining.z);
+  if (t === AIR) { stopMining(); return; }
+  mining.progress += dt / Math.max(0.05, hardnessOf(t));
+  if (mining.progress >= 1) {
+    breakBlockAt(mining.x, mining.y, mining.z);
+    stopMining();
+    return;
+  }
+  var stage = Math.min(CRACK_STAGES - 1, Math.floor(mining.progress * CRACK_STAGES));
+  if (stage !== mining.stage) {
+    mining.stage = stage;
+    crackMesh.material.map = crackTextures[stage];
+  }
+  crackMesh.position.set(mining.x + 0.5, mining.y + 0.5, mining.z + 0.5);
+  crackMesh.visible = true;
+}
+
+// A quick tap still digs: releasing once the block is a third broken finishes it.
+function releaseMining() {
+  if (mining.active && mining.progress >= 0.34) {
+    breakBlockAt(mining.x, mining.y, mining.z);
+  }
+  stopMining();
 }
 
 function placeBlock() {
@@ -1996,9 +2130,9 @@ canvas.addEventListener('mousedown', function (e) {
   }
   if (paletteOpen) return;
   heldBtn = e.button;
-  repeatTimer = 0.26;
+  repeatTimer = 0.30;
   repeatAction = heldBtn === 0 ? 'break' : 'place';
-  if (heldBtn === 0) breakBlock(); else if (heldBtn === 2) placeBlock();
+  if (heldBtn === 0) startMining(); else if (heldBtn === 2) placeBlock();
 });
 document.addEventListener('mousemove', function (e) {
   if (paletteOpen) return;
@@ -2008,7 +2142,10 @@ document.addEventListener('mousemove', function (e) {
     dragLastX = e.clientX; dragLastY = e.clientY;
   }
 });
-document.addEventListener('mouseup', function () { heldBtn = -1; repeatTimer = 0; repeatAction = null; dragging = false; });
+document.addEventListener('mouseup', function () {
+  if (heldBtn === 0) releaseMining();
+  heldBtn = -1; repeatTimer = 0; repeatAction = null; dragging = false;
+});
 document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 document.addEventListener('wheel', function (e) {
   if (paletteOpen) return;
@@ -2101,8 +2238,8 @@ function bindBtn(id, onDown, onUp) {
   });
 }
 bindBtn('btnJump', function () { pad.jump = true; }, function () { pad.jump = false; });
-bindBtn('btnBreak', function () { breakBlock(); repeatAction = 'break'; repeatTimer = 0.24; },
-                     function () { repeatAction = null; repeatTimer = 0; });
+bindBtn('btnBreak', function () { repeatAction = 'break'; startMining(); },
+                     function () { releaseMining(); repeatAction = null; repeatTimer = 0; });
 bindBtn('btnPlace', function () { placeBlock(); });
 bindBtn('btnFly', function () { player.fly = !player.fly; player.vel.y = 0; toast(player.fly ? 'Fly mode on' : 'Fly mode off'); });
 bindBtn('btnSneak', function () { pad.sneak = !pad.sneak; this.classList.toggle('on', pad.sneak); });
@@ -2334,12 +2471,13 @@ function frame(now) {
   var under = getBlock(Math.floor(player.pos.x), Math.floor(camera.position.y), Math.floor(player.pos.z)) === WATER;
   document.getElementById('underwater').classList.toggle('on', under);
 
-  if (repeatAction) {
+  if (repeatAction === 'break') {
+    updateMining(dt);
+  } else if (repeatAction === 'place') {
     repeatTimer -= dt;
-    if (repeatTimer <= 0) {
-      if (repeatAction === 'break') breakBlock(); else placeBlock();
-      repeatTimer = 0.24;
-    }
+    if (repeatTimer <= 0) { placeBlock(); repeatTimer = 0.24; }
+  } else if (mining.active) {
+    stopMining();
   }
 
   sky.position.copy(camera.position);
