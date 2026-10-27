@@ -752,7 +752,10 @@ function buildChunkMesh(c) {
             // light comes from the cell this face looks into
             var lv = lightAt(nx2, ny, nz);
             var lm = 0.16 + 0.84 * (lv / 15);
-            col = [def.color[0] * sh * lm, def.color[1] * sh * lm, def.color[2] * sh * lm];
+            var bc = def.color;
+            // grass shows earth on its sides and bottom, so terraces read as soil
+            if (t === GRASS && d[1] <= 0) bc = BLOCKS[DIRT].color;
+            col = [bc[0] * sh * lm, bc[1] * sh * lm, bc[2] * sh * lm];
           }
           var start = target.pos.length / 3;
           var aoList = [];
